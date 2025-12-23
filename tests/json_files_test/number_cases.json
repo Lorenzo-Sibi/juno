@@ -1,0 +1,23 @@
+{
+    "small_int": 42,
+    "negative_int": -123,
+    "zero": 0,
+  
+    "int64_max": 9223372036854775807,
+    "int64_min": -9223372036854775808,
+  
+    "beyond_int64_pos": 9223372036854775808,
+    "beyond_int64_neg": -9223372036854775809,
+  
+    "simple_float": 3.14,
+    "float_trailing_zero": 1.0,
+    "float_no_leading_zero": 0.4,
+  
+    "exp_pos": 1e3,
+    "exp_neg": 1e-3,
+    "exp_with_sign": -2.5E+4,
+  
+    "array_mixed": [1, 2.0, 3e2, 4000000000000000000, -5.5],
+    "root_array_example": [1, 2, 3],
+    "root_literal_true": true
+  }
