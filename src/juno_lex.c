@@ -14,6 +14,8 @@ static JToken jl_create_token(JLexer *lx, JTokenType type, const char *start, si
     memset(&t, 0, sizeof(t));
     t.type   = type;
     t.start  = start;
+    t.line_start = lx->line_start;
+    t.buf_end = lx->end;
     t.line   = (uint32_t)line;
     t.column = (uint32_t)col;
     t.length = (size_t)(lx->p - start);
@@ -267,6 +269,7 @@ char jl_adv(JLexer *lx) {
     if (c == '\n') {
         lx->line++;
         lx->col = 1;
+        lx->line_start = lx->p;
     } else {
         lx->col++;
     }
@@ -283,6 +286,7 @@ void jl_init(JLexer *lx, const char *data, size_t len) {
     lx->buf = data;
     lx->p = data;
     lx->end = data + len;
+    lx->line_start = data;
     lx->line = 1;
     lx->col = 1;
 }

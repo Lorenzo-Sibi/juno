@@ -49,13 +49,13 @@ The following tasks are prioritized to move the library from prototype to produc
     - *Current*: `union` uses only `double nvalue`.
     - *Goal*: Add `int64_t ivalue` to `JsonNode`. Update lexer to distinguish integers from floats. Essential for 64-bit IDs.
 
-### Priority 2: Architecture & Stability
-- [ ] **Refactor Build System**
+### Priority 1: Architecture & Stability
+- [x] ~~**Refactor Build System**~~
     - *Task*: Split `jsont.h` into interface (`.h`) and implementation (`.c`).
     - *Task*: Remove `main()` from `jsonp.c` to allow linking as a library. Move demo code to `demo.c`.
 - [x] ~~**Fix Test Suite**~~
     - *Task*: `tests/test_main.c` uses a non-existent API. Rewrite it to use `jp_parse` and `JsonNode` fields directly.
-- [ ] **Thread-Safe Error Handling and gneral errors**
+- [x] ~~**Thread-Safe Error Handling and gneral errors**~~
     - *Current*: Uses global `error_node`.
     - *Goal*: Return errors via a context struct or return value to support concurrent request handling.
     - Find a way to get rid of the *err_msg in the JToken struct so to save memory.

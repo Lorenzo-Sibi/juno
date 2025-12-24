@@ -16,6 +16,8 @@ typedef enum {
 typedef struct {
     const char  *start;
     const char  *err_msg;
+    const char  *line_start;
+    const char  *buf_end;
     size_t       length;
     uint32_t     line, column;
     JTokenType   type;
@@ -25,6 +27,7 @@ typedef struct {
     const char *buf;
     const char *p;
     const char *end;
+    const char *line_start;
     size_t line;
     size_t col;
 } JLexer;

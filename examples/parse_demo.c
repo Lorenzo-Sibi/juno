@@ -10,7 +10,7 @@ int main(int argc, char *argv[]) {
     juno_print_ast(root);
 
     if (juno_is_error(root)){
-        fprintf(stderr, "Parse error: %s\n", root->value.err_msg ? root->value.err_msg : "(unknown)");
+        fprintf(stderr, "%s\n", root->value.err_msg ? root->value.err_msg : "Parse error");
         /* error node is static FOR NOW no free needed */
         return 1;
     } 

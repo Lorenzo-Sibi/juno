@@ -1,30 +1,88 @@
 #include "internal/juno_internal.h"
 
 /* ------------------------------
- * Internal error node
+ * Error handling
  * ------------------------------ */
 
-static char g_error_buf[256] = "Error message not set";
+static void _format_error(char *out, size_t out_len, const char *err_msg, const JToken *tok) {
+    if (!out || out_len == 0) return;
 
-static JsonNode g_error_node = {
-    .value.err_msg = g_error_buf,
-    .first_child   = NULL,
-    .next_sibling  = NULL,
-    .key           = NULL,
-    .type          = JND_ERROR,
-    .is_integer    = false,
-};
+    const char *reason = err_msg ? err_msg : JUNO_ERROR_MSG_DEFAULT;
+    out[0] = '\0';
 
-void juno_error_set_msg(const char *err_msg) {
-    if (!err_msg) return;
-    /* Ensure NUL-termination */
-    strncpy(g_error_buf, err_msg, sizeof(g_error_buf) - 1);
-    g_error_buf[sizeof(g_error_buf) - 1] = '\0';
+    if (!tok) {
+        snprintf(out, out_len, "Parse error: %s", reason);
+        return;
+    }
+
+    const char *line_start = tok->line_start;
+    const char *buf_end = tok->buf_end;
+
+    if (!line_start || !buf_end || line_start > tok->start || tok->start > buf_end) {
+        snprintf(out, out_len, "Parse error at %u:%u: %s", tok->line, tok->column, reason);
+        return;
+    }
+
+    size_t max_scan = (size_t)(buf_end - line_start);
+    const char *nl = memchr(line_start, '\n', max_scan);
+    const char *line_end = nl ? nl : buf_end;
+    if (line_end < line_start) {
+        snprintf(out, out_len, "Parse error at %u:%u: %s", tok->line, tok->column, reason);
+        return;
+    }
+
+    size_t line_len = (size_t)(line_end - line_start);
+    if (line_len == 0) {
+        snprintf(out, out_len, "Parse error at %u:%u: %s", tok->line, tok->column, reason);
+        return;
+    }
+
+    size_t col_idx = tok->column ? (size_t)(tok->column - 1) : 0;
+    if (col_idx >= line_len) col_idx = line_len - 1;
+
+    const size_t window = 70;
+    size_t start_off = 0;
+    if (line_len > window) {
+        if (col_idx > window / 2) start_off = col_idx - (window / 2);
+        if (start_off + window > line_len) start_off = line_len - window;
+    }
+    size_t snippet_len = line_len - start_off;
+    if (snippet_len > window) snippet_len = window;
+
+    size_t caret_pos = (col_idx > start_off) ? (col_idx - start_off) : 0;
+    if (caret_pos >= snippet_len) caret_pos = snippet_len ? snippet_len - 1 : 0;
+
+    snprintf(out, out_len,
+        "Parse error at %u:%u\n  %.*s\n  %*s^\n  %s",
+        tok->line, tok->column,
+        (int)snippet_len, line_start + start_off,
+        (int)caret_pos, "",
+        reason
+    );
 }
 
-JsonNode* juno_error(const char *err_msg) {
-    if (err_msg) juno_error_set_msg(err_msg);
-    return &g_error_node;
+void juno_error_set_msg(JsonNode *err_node, const char *err_msg) {
+    if (!err_node || !err_msg || err_node->type != JND_ERROR) return;
+    /* Ensure NUL-termination */
+    char *err_msg_buf = (char*)calloc(1, JUNO_ERROR_MSG_MAX_LEN);
+    strncpy(err_msg_buf, err_msg, JUNO_ERROR_MSG_MAX_LEN - 1);
+    err_msg_buf[JUNO_ERROR_MSG_MAX_LEN - 1] = '\0';
+    err_node->value.err_msg = err_msg_buf;
+}
+
+JsonNode* juno_error(const char *err_msg, const JToken *curr_tok) {
+    JsonNode *err_node = (JsonNode*)calloc(1, sizeof(JsonNode));
+    if (!err_node) return NULL;
+    err_node->type = JND_ERROR;
+    err_node->value.err_msg = JUNO_ERROR_MSG_DEFAULT;
+    err_node->is_integer = false;
+
+    char buf[JUNO_ERROR_MSG_MAX_LEN] = { 0 };
+    if (curr_tok) {
+        _format_error(buf, sizeof(buf), err_msg, curr_tok);
+        juno_error_set_msg(err_node, buf);
+    } else if (err_msg) juno_error_set_msg(err_node, err_msg);
+    return err_node;
 }
 
 /* ------------------------------
@@ -140,7 +198,6 @@ void juno_print_ast(JsonNode *root) {
 
 void juno_free_ast(JsonNode *root) {
     if (!root) return;
-    if (root == &g_error_node) return; /* static */
 
     JsonNode *child = root->first_child;
     while (child) {
@@ -149,9 +206,8 @@ void juno_free_ast(JsonNode *root) {
         child = next;
     }
 
-    if (root->type == JND_STRING && root->value.svalue) {
-        free(root->value.svalue);
-    }
+    if (root->type == JND_STRING && root->value.svalue) free(root->value.svalue);
+    if (root->type == JND_ERROR && root->value.err_msg) free(root->value.err_msg);
     if (root->key) free(root->key);
 
     free(root);
@@ -173,7 +229,7 @@ static JsonNode* juno_create_node(JNodeType type) {
  * ------------------------------ */
 
 JsonNode* juno_parse_value(JLexer *lx, unsigned short depth) {
-    if (depth > JUNO_MAX_NESTING) return juno_error("maximum nesting reached");
+    if (depth > JUNO_MAX_NESTING) return juno_error("maximum nesting reached", NULL);
 
     jl_skip_ws(lx);
     if (jl_peek(lx) == '{') return juno_parse_obj(lx, (unsigned short)(depth + 1));
@@ -184,17 +240,17 @@ JsonNode* juno_parse_value(JLexer *lx, unsigned short depth) {
     switch (tok.type) {
         case JTK_STRING: {
             JsonNode *n = juno_create_node(JND_STRING);
-            if (!n) return juno_error("oom (string)");
+            if (!n) return juno_error("oom (string)", &tok);
             n->value.svalue = jl_string_to_utf8(&tok, NULL);
             if (!n->value.svalue) {
                 juno_free_ast(n);
-                return juno_error(tok.err_msg ? tok.err_msg : "invalid string");
+                return juno_error(tok.err_msg ? tok.err_msg : "invalid string", &tok);
             }
             return n;
         }
         case JTK_NUMBER: {
             JsonNode *n = juno_create_node(JND_NUMBER);
-            if (!n) return juno_error("oom (number)");
+            if (!n) return juno_error("oom (number)", &tok);
             int64_t iv = 0;
             if (jl_number_to_int64(&tok, &iv)) {
                 n->is_integer = true;
@@ -203,45 +259,46 @@ JsonNode* juno_parse_value(JLexer *lx, unsigned short depth) {
                 n->is_integer = false;
                 if (!jl_number_to_double(&tok, &n->value.nvalue)) {
                     juno_free_ast(n);
-                    return juno_error("invalid number");
+                    return juno_error("invalid number", &tok);
                 }
             }
             return n;
         }
         case JTK_TRUE: {
             JsonNode *n = juno_create_node(JND_BOOL);
-            if (!n) return juno_error("oom (bool)");
+            if (!n) return juno_error("oom (bool)", &tok);
             n->value.bvalue = true;
             return n;
         }
         case JTK_FALSE: {
             JsonNode *n = juno_create_node(JND_BOOL);
-            if (!n) return juno_error("oom (bool)");
+            if (!n) return juno_error("oom (bool)", &tok);
             n->value.bvalue = false;
             return n;
         }
         case JTK_NULL:
             return juno_create_node(JND_NULL);
         case JTK_ERROR:
-            return juno_error(tok.err_msg ? tok.err_msg : "lexer error");
+            return juno_error(tok.err_msg ? tok.err_msg : "lexer error", &tok);
         default:
-            return juno_error("unexpected token while parsing value");
+            return juno_error("unexpected token while parsing value", &tok);
     }
 }
 
 JsonNode* juno_parse_array(JLexer *lx, unsigned short depth) {
     JsonNode *array = juno_create_node(JND_ARRAY);
     JsonNode *tail = NULL;
+    char *err_msg = NULL;
 
-    if (!array) return juno_error("oom (array)");
+    if (!array) return juno_error("oom (array)", NULL);
     if (depth > JUNO_MAX_NESTING) {
-        juno_error_set_msg("maximum nesting reached");
+        err_msg = "maximum nesting reached";
         goto error;
     }
 
     JToken tok = jl_next(lx);
     if (tok.type != JTK_LBRACK) {
-        juno_error_set_msg("expected '[' while parsing array");
+        err_msg = "expected '[' while parsing array";
         goto error;
     }
 
@@ -254,7 +311,7 @@ JsonNode* juno_parse_array(JLexer *lx, unsigned short depth) {
     while (1) {
         JsonNode *val = juno_parse_value(lx, depth);
         if (!val || juno_is_error(val)) {
-            juno_error_set_msg("error while parsing array element");
+            err_msg = "error while parsing array element";
             goto error;
         }
 
@@ -266,7 +323,7 @@ JsonNode* juno_parse_array(JLexer *lx, unsigned short depth) {
         if (tok.type == JTK_RBRACK) break;
         if (tok.type == JTK_COMMA) continue;
 
-        juno_error_set_msg("expected ',' or ']' while parsing array");
+        err_msg = "expected ',' or ']' while parsing array";
         goto error;
     }
 
@@ -274,21 +331,22 @@ JsonNode* juno_parse_array(JLexer *lx, unsigned short depth) {
 
 error:
     juno_free_ast(array);
-    return juno_error(NULL);
+    return juno_error(err_msg, &tok);
 }
 
 JsonNode* juno_parse_obj(JLexer *lx, unsigned short depth) {
     JsonNode *obj = juno_create_node(JND_OBJ);
     JsonNode *tail = NULL;
+    char *err_msg = NULL;
 
-    if (!obj) return juno_error("oom (object)");
+    if (!obj) return juno_error("oom (object)", NULL);
     if (depth > JUNO_MAX_NESTING) {
-        juno_error_set_msg("maximum nesting reached");
+        err_msg = "maximum nesting reached";
         goto error;
     }
 
     JToken tok = jl_next(lx);
-    if (tok.type != JTK_LBRACE) return juno_error("expected '{'");
+    if (tok.type != JTK_LBRACE) return juno_error("expected '{'", &tok);
 
     int first = 1;
     while (1) {
@@ -297,7 +355,7 @@ JsonNode* juno_parse_obj(JLexer *lx, unsigned short depth) {
 
         if (!first) {
             if (tok.type != JTK_COMMA) {
-                juno_error_set_msg("expected ',' between object properties");
+                err_msg = "expected ',' between object properties";
                 goto error;
             }
             tok = jl_next(lx);
@@ -305,27 +363,27 @@ JsonNode* juno_parse_obj(JLexer *lx, unsigned short depth) {
         first = 0;
 
         if (tok.type != JTK_STRING) {
-            juno_error_set_msg("expected string as object key");
+            err_msg = "expected string as object key";
             goto error;
         }
 
         char *key = jl_string_to_utf8(&tok, NULL);
         if (!key) {
-            juno_error_set_msg("invalid object key string");
+            err_msg = "invalid object key string";
             goto error;
         }
 
         tok = jl_next(lx);
         if (tok.type != JTK_COLON) {
             free(key);
-            juno_error_set_msg("expected ':' after object key");
+            err_msg = "expected ':' after object key";
             goto error;
         }
 
         JsonNode *val = juno_parse_value(lx, (unsigned short)(depth + 1));
         if (!val || juno_is_error(val)) {
             free(key);
-            juno_error_set_msg("error while parsing object value");
+            err_msg = "error while parsing object value";
             goto error;
         }
         val->key = key;
@@ -339,7 +397,8 @@ JsonNode* juno_parse_obj(JLexer *lx, unsigned short depth) {
 
 error:
     juno_free_ast(obj);
-    return juno_error(NULL);
+    return juno_error(err_msg, &tok);
+
 }
 
 /* ------------------------------
@@ -347,29 +406,22 @@ error:
  * ------------------------------ */
 
 JsonNode* juno_parse(const char *json_str, size_t len) {
-    if (!json_str) return juno_error("null input");
+    if (!json_str) return juno_error("null input", NULL);
 
     JLexer lx;
     jl_init(&lx, json_str, len);
 
-    jl_skip_ws(&lx);
-    char c = jl_peek(&lx);
-
     /* We count nesting starting at 1 for the root container, so that
        depth == JUNO_MAX_NESTING is allowed and depth == JUNO_MAX_NESTING + 1 is rejected. */
-    JsonNode *root = NULL;
-    if (c == '{') root = juno_parse_obj(&lx, 1);
-    else if (c == '[') root = juno_parse_array(&lx, 1);
-    else root = juno_error("root must be object or array");
-
+    JsonNode *root = juno_parse_value(&lx, 0);
     return root;
 }
 
 JsonNode* juno_parse_file(const char *filename) {
-    if (!filename) return juno_error("null filename");
+    if (!filename) return juno_error("null filename", NULL);
 
     char *content = _read_file(filename);
-    if (!content) return juno_error("failed to read file");
+    if (!content) return juno_error("failed to read file", NULL);
 
     JsonNode *root = juno_parse(content, strlen(content));
     free(content);
