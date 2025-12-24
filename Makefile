@@ -1,45 +1,45 @@
 CC = gcc
+AR = ar
 CFLAGS = -Wall -Wextra -std=c99 -g
 
-OBJ_DIR  = obj
+OBJ_DIR = obj
 BIN_DIR = bin
-TEST_DIR = tests
-JSON_TEST_DIR = $(TEST_DIR)/json_files_test
+LIB_DIR = lib
 
-SRCS = jsonp.c
-OBJS = $(patsubst %.c, $(OBJ_DIR)/%.o, $(SRCS))
+INCLUDES = -I include -I src
 
-TEST_SRCS = $(TEST_DIR)/test_main.c
-TEST_OBJS = $(OBJ_DIR)/test_main.o
+LIB_NAME = juno
+LIB_A = $(LIB_DIR)/lib$(LIB_NAME).a
 
-all: parser
+LIB_SRCS = src/juno.c src/juno_lex.c
+LIB_OBJS = $(patsubst %.c, $(OBJ_DIR)/%.o, $(LIB_SRCS))
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+DEMO_SRC := examples/parse_demo.c
+DEMO_OBJ := $(OBJ_DIR)/$(DEMO_SRC:.c=.o)
 
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
+TEST_SRC := tests/test_main.c
+TEST_OBJ := $(OBJ_DIR)/$(TEST_SRC:.c=.o)
+
+all: $(LIB_A) demo
+
+$(BIN_DIR) $(OBJ_DIR) $(LIB_DIR):
+	mkdir -p $@
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -I. -c $< -o $@
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(LIB_A): $(LIB_OBJS) | $(LIB_DIR)
+	$(AR) rcs $@ $(LIB_OBJS)
 	
-tokenizer: jsont.h
-	$(CC) -Wall -Wextra -Og -g jsont.h -o jsont
+demo: $(LIB_A) $(DEMO_OBJ) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/demo $(DEMO_OBJ) $(LIB_A)
 
-parser: $(BIN_DIR) jsonp.c jsont.h
-	$(CC) -Wall -Wextra -Og -g -DJSONP_DEMO jsonp.c -o $(BIN_DIR)/jsonp
-
-# Test suite: builds the library objects + tests/test_main.c
-test: $(BIN_DIR) $(OBJS) $(TEST_OBJS)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/test_runner $(TEST_OBJS) $(OBJS)
+test: $(LIB_A) $(TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/test_runner $(TEST_OBJ) $(LIB_A)
 	$(BIN_DIR)/test_runner
 
-$(OBJ_DIR)/test_main.o: $(TEST_DIR)/test_main.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -I. -c $< -o $@
-
 clean:
-	rm -f jsont jsonp test_runner
-	rm -rf $(BIN_DIR)
-	rm -rf $(OBJ_DIR)
+	rm -rf $(OBJ_DIR) $(BIN_DIR) $(LIB_DIR)
 
-.PHONY: all clean test tokenizer parser
+.PHONY: all clean demo test

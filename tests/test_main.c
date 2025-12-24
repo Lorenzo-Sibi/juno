@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../jsonp.h"
+#include <juno/juno.h>
 
 /* ------------------------------------------------------------------
  *  Minimal test framework
@@ -93,10 +93,10 @@ static JsonNode *array_get(JsonNode *arr, size_t index) {
 /* Basic object with string value */
 static void test_simple_object(void) {
     const char *json = "{\"key\": \"value\"}";
-    JsonNode *root = jp_parse(json, strlen(json));
+    JsonNode *root = juno_parse(json, strlen(json));
 
     ASSERT_TRUE(root != NULL);
-    ASSERT_TRUE(!jp_is_error(root));
+    ASSERT_TRUE(!juno_is_error(root));
     ASSERT_TRUE(root->type == JND_OBJ);
 
     JsonNode *val = find_member(root, "key");
@@ -104,15 +104,15 @@ static void test_simple_object(void) {
     ASSERT_TRUE(val->type == JND_STRING);
     ASSERT_STR_EQ("value", val->value.svalue);
 
-    jp_free_ast(root);
+    juno_free_ast(root);
 }
 
 /* Numbers: integer vs fractional / exponent */
 static void test_numbers_variants(void) {
     const char *json = "{\"int\": 123, \"neg\": -5, \"frac\": 0.5, \"exp\": 1e3}";
-    JsonNode *root = jp_parse(json, strlen(json));
+    JsonNode *root = juno_parse(json, strlen(json));
 
-    ASSERT_TRUE(root && !jp_is_error(root));
+    ASSERT_TRUE(root && !juno_is_error(root));
 
     JsonNode *n_int  = find_member(root, "int");
     JsonNode *n_neg  = find_member(root, "neg");
@@ -131,15 +131,15 @@ static void test_numbers_variants(void) {
     ASSERT_TRUE(n_exp && n_exp->type == JND_NUMBER && !n_exp->is_integer);
     ASSERT_DOUBLE_NEAR(1000.0, n_exp->value.nvalue, 1e-9);
 
-    jp_free_ast(root);
+    juno_free_ast(root);
 }
 
 /* Invalid numbers – leading zeroes are forbidden by the grammar */
 static void test_invalid_number_leading_zero(void) {
     const char *json = "{\"n\": 01}";
-    JsonNode *root = jp_parse(json, strlen(json));
+    JsonNode *root = juno_parse(json, strlen(json));
     ASSERT_TRUE(root != NULL);
-    ASSERT_TRUE(jp_is_error(root));
+    ASSERT_TRUE(juno_is_error(root));
 }
 
 /* Strings with escapes, including Unicode */
@@ -149,8 +149,8 @@ static void test_strings_and_unicode(void) {
         "\"escaped\": \"\\\"\\\\\\/\\b\\f\\n\\r\\t\","
         "\"euro\": \"\\u20AC\""
         "}";
-    JsonNode *root = jp_parse(json, strlen(json));
-    ASSERT_TRUE(root && !jp_is_error(root));
+    JsonNode *root = juno_parse(json, strlen(json));
+    ASSERT_TRUE(root && !juno_is_error(root));
 
     JsonNode *escaped = find_member(root, "escaped");
     JsonNode *euro    = find_member(root, "euro");
@@ -162,14 +162,14 @@ static void test_strings_and_unicode(void) {
     /* Expected UTF‑8 for '€' (U+20AC) */
     ASSERT_STR_EQ("€", euro->value.svalue);
 
-    jp_free_ast(root);
+    juno_free_ast(root);
 }
 
 /* Literals true / false / null */
 static void test_literals(void) {
     const char *json = "[true, false, null]";
-    JsonNode *root = jp_parse(json, strlen(json));
-    ASSERT_TRUE(root && !jp_is_error(root));
+    JsonNode *root = juno_parse(json, strlen(json));
+    ASSERT_TRUE(root && !juno_is_error(root));
     ASSERT_TRUE(root->type == JND_ARRAY);
 
     JsonNode *t = array_get(root, 0);
@@ -180,13 +180,13 @@ static void test_literals(void) {
     ASSERT_TRUE(f && f->type == JND_BOOL && f->value.bvalue == false);
     ASSERT_TRUE(n && n->type == JND_NULL);
 
-    jp_free_ast(root);
+    juno_free_ast(root);
 }
 
-/* Nested arrays up to MAX_NESTING */
+/* Nested arrays up to JUNO_MAX_NESTING */
 static void test_max_nesting_ok(void) {
-    /* Build something like [[[ ... 0 ... ]]] with depth == MAX_NESTING */
-    const int depth = MAX_NESTING;
+    /* Build something like [[[ ... 0 ... ]]] with depth == JUNO_MAX_NESTING */
+    const int depth = JUNO_MAX_NESTING;
     int open_brackets = depth;
     int close_brackets = depth;
 
@@ -200,16 +200,16 @@ static void test_max_nesting_ok(void) {
     for (int i = 0; i < close_brackets; ++i) *p++ = ']';
     *p = '\0';
 
-    JsonNode *root = jp_parse(buf, strlen(buf));
-    ASSERT_TRUE(root && !jp_is_error(root));
+    JsonNode *root = juno_parse(buf, strlen(buf));
+    ASSERT_TRUE(root && !juno_is_error(root));
 
-    jp_free_ast(root);
+    juno_free_ast(root);
     free(buf);
 }
 
-/* Depth > MAX_NESTING should be rejected */
+/* Depth > JUNO_MAX_NESTING should be rejected */
 static void test_exceed_max_nesting(void) {
-    const int depth = MAX_NESTING + 1;
+    const int depth = JUNO_MAX_NESTING + 1;
     int open_brackets = depth;
     int close_brackets = depth;
 
@@ -223,31 +223,31 @@ static void test_exceed_max_nesting(void) {
     for (int i = 0; i < close_brackets; ++i) *p++ = ']';
     *p = '\0';
 
-    JsonNode *root = jp_parse(buf, strlen(buf));
+    JsonNode *root = juno_parse(buf, strlen(buf));
     ASSERT_TRUE(root != NULL);
-    ASSERT_TRUE(jp_is_error(root));
+    ASSERT_TRUE(juno_is_error(root));
 
-    /* Do not free error_node; jp_free_ast is a no-op on it */
-    jp_free_ast(root);
+    /* Do not free error_node; juno_free_ast is a no-op on it */
+    juno_free_ast(root);
     free(buf);
 }
 
 /* Comments are not allowed by RFC – lexer should produce an error. */
 static void test_reject_comments(void) {
     const char *json = "{/* comment */ \"a\": 1}";
-    JsonNode *root = jp_parse(json, strlen(json));
+    JsonNode *root = juno_parse(json, strlen(json));
     ASSERT_TRUE(root != NULL);
-    ASSERT_TRUE(jp_is_error(root));
+    ASSERT_TRUE(juno_is_error(root));
 }
 
 /* Use some of the JSON files under tests/json_files_test/ */
 static void test_number_cases_file(void) {
-    JsonNode *root = jp_parse_file("./tests/json_files_test/number_cases.json");
+    JsonNode *root = juno_parse_file("./tests/json_files_test/number_cases.json");
     ASSERT_TRUE(root != NULL);
     /* Just make sure it is either a valid tree or a well‑formed error node,
        i.e. the file is at least lexically valid JSON according to our rules. */
-    ASSERT_TRUE(root->type == JND_ARRAY || root->type == JND_OBJ || jp_is_error(root));
-    jp_free_ast(root);
+    ASSERT_TRUE(root->type == JND_ARRAY || root->type == JND_OBJ || juno_is_error(root));
+    juno_free_ast(root);
 }
 
 /* ------------------------------------------------------------------
