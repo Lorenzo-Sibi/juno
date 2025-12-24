@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <juno/version.h>
+
 #ifndef JUNO_MAX_NESTING
 #define JUNO_MAX_NESTING 64
 #endif

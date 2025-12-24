@@ -1,0 +1,5 @@
+#pragma once
+#define JUNO_VERSION_MAJOR 0
+#define JUNO_VERSION_MINOR 1
+#define JUNO_VERSION_PATCH 1
+#define JUNO_VERSION_STRING "0.1.1"
